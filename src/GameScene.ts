@@ -382,20 +382,28 @@ export default class GameScene {
     // Determine the WebSocket URL based on environment
     let wsUrl: string;
     
+    console.log('Environment variables check:');
+    console.log('process.env.REACT_APP_SERVER_URL:', process.env.REACT_APP_SERVER_URL);
+    console.log('hostname:', globalThis.location.hostname);
+    console.log('protocol:', globalThis.location.protocol);
+    
     // Check if we have a specific server URL in environment variables first
     if (process.env.REACT_APP_SERVER_URL) {
       wsUrl = process.env.REACT_APP_SERVER_URL;
+      console.log('Using environment variable server URL');
     } else if (globalThis.location.hostname === 'localhost') {
       // Development environment without specific server URL
       wsUrl = 'ws://localhost:2567';
+      console.log('Using localhost development server');
     } else {
       // Production environment (Render or other hosting)
       const protocol = globalThis.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const hostname = globalThis.location.hostname;
       wsUrl = `${protocol}//${hostname}`;
+      console.log('Using production server URL');
     }
     
-    console.log('Connecting to WebSocket:', wsUrl);
+    console.log('Final WebSocket URL:', wsUrl);
     this.client = new Colyseus.Client(wsUrl);
   }
 
