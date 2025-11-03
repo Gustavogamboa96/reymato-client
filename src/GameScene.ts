@@ -396,11 +396,9 @@ export default class GameScene {
       wsUrl = 'ws://localhost:2567';
       console.log('Using localhost development server');
     } else {
-      // Production environment (Render or other hosting)
-      const protocol = globalThis.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const hostname = globalThis.location.hostname;
-      wsUrl = `${protocol}//${hostname}`;
-      console.log('Using production server URL');
+      // Production environment - always use the Render server URL
+      wsUrl = 'wss://reymato-server.onrender.com';
+      console.log('Using production server URL (hardcoded for Render)');
     }
     
     console.log('Final WebSocket URL:', wsUrl);
