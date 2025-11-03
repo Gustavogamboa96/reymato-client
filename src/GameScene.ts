@@ -379,11 +379,27 @@ export default class GameScene {
   }
 
   private setupNetworking() {
-    // Use localhost for development, can be changed for production
-    const wsUrl = globalThis.location.hostname === 'localhost' 
-      ? 'ws://localhost:2567' 
-      : `ws://${globalThis.location.hostname}:2567`;
+    // Determine the WebSocket URL based on environment
+    let wsUrl: string;
     
+    if (globalThis.location.hostname === 'localhost') {
+      // Development environment
+      wsUrl = 'ws://localhost:2567';
+    } else {
+      // Production environment (Render)
+      // Render web services use HTTPS, so we need WSS for WebSocket
+      const protocol = globalThis.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const hostname = globalThis.location.hostname;
+      
+      // For Render, you can either use:
+      // 1. Your custom domain if you have one
+      // 2. The default Render URL (replace 'your-service-name' with your actual service name)
+      const serverUrl = process.env.REACT_APP_SERVER_URL || `${protocol}//${hostname}`;
+      
+      wsUrl = serverUrl.includes('://') ? serverUrl : `${protocol}//${serverUrl}`;
+    }
+    
+    console.log('Connecting to WebSocket:', wsUrl);
     this.client = new Colyseus.Client(wsUrl);
   }
 
