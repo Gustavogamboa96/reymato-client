@@ -382,21 +382,17 @@ export default class GameScene {
     // Determine the WebSocket URL based on environment
     let wsUrl: string;
     
-    if (globalThis.location.hostname === 'localhost') {
-      // Development environment
+    // Check if we have a specific server URL in environment variables first
+    if (process.env.REACT_APP_SERVER_URL) {
+      wsUrl = process.env.REACT_APP_SERVER_URL;
+    } else if (globalThis.location.hostname === 'localhost') {
+      // Development environment without specific server URL
       wsUrl = 'ws://localhost:2567';
     } else {
-      // Production environment (Render)
-      // Render web services use HTTPS, so we need WSS for WebSocket
+      // Production environment (Render or other hosting)
       const protocol = globalThis.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const hostname = globalThis.location.hostname;
-      
-      // For Render, you can either use:
-      // 1. Your custom domain if you have one
-      // 2. The default Render URL (replace 'your-service-name' with your actual service name)
-      const serverUrl = process.env.REACT_APP_SERVER_URL || `${protocol}//${hostname}`;
-      
-      wsUrl = serverUrl.includes('://') ? serverUrl : `${protocol}//${serverUrl}`;
+      wsUrl = `${protocol}//${hostname}`;
     }
     
     console.log('Connecting to WebSocket:', wsUrl);
