@@ -302,8 +302,8 @@ export default class GameScene {
   }
 
   private createBall() {
-    // Bigger bouncy ball
-    const ballGeometry = new THREE.SphereGeometry(0.7, 16, 16); // Match server size
+    // Even bigger bouncy ball
+    const ballGeometry = new THREE.SphereGeometry(0.9, 16, 16); // Match server size (0.9)
     const ballMaterial = new THREE.MeshLambertMaterial({ 
       color: 0xFFFFFF,
       transparent: true,
@@ -379,29 +379,39 @@ export default class GameScene {
   }
 
   private setupNetworking() {
-    // Determine the WebSocket URL based on environment
+    // Simple setup: localhost for development, Render for production
     let wsUrl: string;
     
-    console.log('Environment variables check:');
-    console.log('process.env.REACT_APP_SERVER_URL:', process.env.REACT_APP_SERVER_URL);
+    console.log('Environment check:');
     console.log('hostname:', globalThis.location.hostname);
     console.log('protocol:', globalThis.location.protocol);
     
-    // Check if we have a specific server URL in environment variables first
-    if (process.env.REACT_APP_SERVER_URL) {
-      wsUrl = process.env.REACT_APP_SERVER_URL;
-      console.log('Using environment variable server URL');
-    } else if (globalThis.location.hostname === 'localhost') {
-      // Development environment without specific server URL
-      wsUrl = 'ws://localhost:2567';
-      console.log('Using localhost development server');
+    // If running on localhost, connect to local server
+    if (globalThis.location.hostname === 'localhost') {
+      wsUrl = 'ws://localhost:2567';  // Local server port
+      console.log('✅ Using local development server');
     } else {
-      // Production environment - always use the Render server URL
+      // Production environment - use Render server
       wsUrl = 'wss://reymato-server.onrender.com';
-      console.log('Using production server URL (hardcoded for Render)');
+      console.log('✅ Using production Render server');
     }
     
     console.log('Final WebSocket URL:', wsUrl);
+    console.log('Connecting to WebSocket:', wsUrl);
+    
+    // Test the server health first if it's the Render server
+    if (wsUrl.includes('reymato-server.onrender.com')) {
+      console.log('🏥 Testing server health first...');
+      fetch('https://reymato-server.onrender.com/health')
+        .then(response => response.json())
+        .then(data => {
+          console.log('✅ Server health check passed:', data);
+        })
+        .catch(error => {
+          console.error('❌ Server health check failed:', error);
+        });
+    }
+    
     this.client = new Colyseus.Client(wsUrl);
   }
 
@@ -433,7 +443,8 @@ export default class GameScene {
     const myPlayer = this.room?.state.players.get(this.myPlayerId);
     
     if (myPlayer) {
-      const playerPos = new THREE.Vector3(myPlayer.x, Math.max(myPlayer.y, 0), myPlayer.z);
+      // Use only ground position for camera tracking (ignore Y to prevent shake)
+      const playerGroundPos = new THREE.Vector3(myPlayer.x, 0, myPlayer.z);
       
       // Fixed forward direction - square arrangement, straight across
       let forwardX = 0, forwardZ = 0;
@@ -464,20 +475,20 @@ export default class GameScene {
         forwardZ /= forwardLength;
       }
       
-      // Position camera behind the player (opposite to forward direction)
+      // Position camera behind the player at FIXED HEIGHT (no Y following)
       const cameraOffset = new THREE.Vector3(
         -forwardX * this.cameraDistance,
-        this.cameraHeight,
+        this.cameraHeight, // Fixed camera height
         -forwardZ * this.cameraDistance
       );
       
-      const desiredCameraPos = playerPos.clone().add(cameraOffset);
+      const desiredCameraPos = playerGroundPos.clone().add(cameraOffset);
       
-      // Look in the fixed forward direction (toward center of court)
-      const lookAtPos = playerPos.clone().add(new THREE.Vector3(forwardX * 5, 0, forwardZ * 5));
+      // Look at court center at ground level for stable view
+      const lookAtPos = new THREE.Vector3(0, 1, 0); // Fixed look at court center
       
-      // Smooth camera movement
-      this.camera.position.lerp(desiredCameraPos, 0.1);
+      // Very smooth camera movement to prevent any jitter
+      this.camera.position.lerp(desiredCameraPos, 0.05); // Slower lerp for stability
       this.camera.lookAt(lookAtPos);
       
       // Debug: Log player position occasionally
@@ -508,53 +519,73 @@ export default class GameScene {
 
   public async joinGame(nickname: string) {
     try {
+      console.log('Attempting to join game with nickname:', nickname);
+      console.log('Client setup with URL:', this.client ? 'Client exists' : 'No client!');
+      
       this.room = await this.client.joinOrCreate<GameStateSchema>('rey_mato', { nickname });
       this.myPlayerId = this.room.sessionId;
       
-      console.log('Joined game with player ID:', this.myPlayerId);
+      console.log('✅ Successfully joined game!');
+      console.log('- Player ID:', this.myPlayerId);
+      console.log('- Room ID:', this.room.id);
+      console.log('- Initial state:', this.room.state);
 
       // Handle state changes
       this.room.onStateChange((state) => {
+        console.log('🔄 State change received:', {
+          players: state.players.size,
+          ballPosition: state.ball ? `(${state.ball.x}, ${state.ball.y}, ${state.ball.z})` : 'No ball',
+          matchStarted: state.matchStarted
+        });
         this.updateGameObjects(state);
         this.updateUI(state);
       });
 
       // Handle messages
       this.room.onMessage('event', (message) => {
+        console.log('📨 Game event received:', message);
         this.handleGameEvent(message);
       });
       
       // Handle player animations
       this.room.onMessage('playerAnimation', (message: { playerId: string; action: string }) => {
+        console.log('🎭 Animation message:', message);
         this.animatePlayerKick(message.playerId, message.action);
       });
 
       // Handle room events - these are actually available on the room instance after joining
-      console.log('Joined room successfully');
+      console.log('✅ Room setup complete - waiting for state updates');
       if (this.onStateChange) {
         this.onStateChange({ connected: true });
       }
 
     } catch (error) {
-      console.error('Failed to join room:', error);
+      console.error('❌ Failed to join room:', error);
+      console.error('Error details:', {
+        message: error instanceof Error ? error.message : 'Unknown error',
+        stack: error instanceof Error ? error.stack : 'No stack trace'
+      });
       if (this.onStateChange) {
-        this.onStateChange({ connected: false });
+        this.onStateChange({ connected: false, error: error instanceof Error ? error.message : 'Connection failed' });
       }
     }
   }
 
   private updateGameObjects(state: GameStateSchema) {
+    console.log('🎮 Updating game objects - Players:', state.players.size, 'Ball:', state.ball ? 'exists' : 'missing');
+    
     // Update players
     for (const [playerId, player] of state.players) {
       if (!this.playerMeshes.has(playerId)) {
         // Create new player mesh
+        console.log('🆕 Creating new player mesh for:', playerId, player.nickname, player.role);
         const playerMesh = this.createPlayerMesh(playerId, player.nickname, player.role);
         this.playerMeshes.set(playerId, playerMesh);
         this.scene.add(playerMesh);
         
         // If this is my player, immediately set camera to follow them
         if (playerId === this.myPlayerId) {
-          console.log('Setting up camera for my player:', playerId, 'at position:', player.x, player.y, player.z);
+          console.log('📷 Setting up camera for my player:', playerId, 'at position:', player.x, player.y, player.z);
         }
       }
 
