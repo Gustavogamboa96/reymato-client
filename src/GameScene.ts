@@ -58,6 +58,8 @@ export default class GameScene {
   private readonly playerMeshes: Map<string, THREE.Group> = new Map();
   private ballMesh: THREE.Mesh | null = null;
   private courtMesh: THREE.Group | null = null;
+  private quadrantOverlays: Record<string, THREE.Mesh> = {};
+  private ballShadowMesh: THREE.Mesh | null = null;
   
   // Player state
   private myPlayerId: string = '';
@@ -169,26 +171,21 @@ export default class GameScene {
       this.courtMesh!.add(borderMesh);
     }
 
-    // Quadrant colors (subtle tinting)
-    const quadrantColors = [
-      { color: 0xFFD700, pos: [halfSize / 2, 0.005, halfSize / 2] }, // Rey - Gold
-      { color: 0xC0C0C0, pos: [-halfSize / 2, 0.005, halfSize / 2] }, // Rey1 - Silver
-      { color: 0xCD7F32, pos: [-halfSize / 2, 0.005, -halfSize / 2] }, // Rey2 - Bronze
-      { color: 0xFF6B6B, pos: [halfSize / 2, 0.005, -halfSize / 2] }  // Mato - Red
-    ];
-
-    for (const quad of quadrantColors) {
-      const quadGeometry = new THREE.PlaneGeometry(halfSize - 0.1, halfSize - 0.1);
-      const quadMaterial = new THREE.MeshLambertMaterial({ 
-        color: quad.color, 
-        transparent: true, 
-        opacity: 0.3 
-      });
-      const quadMesh = new THREE.Mesh(quadGeometry, quadMaterial);
-      quadMesh.rotation.x = -Math.PI / 2;
-      quadMesh.position.set(quad.pos[0], quad.pos[1], quad.pos[2]);
-      this.courtMesh!.add(quadMesh);
-    }
+    // Quadrant overlays (store references for dynamic highlighting)
+    const qSize = halfSize - 0.1;
+    const makeQuad = (color: number, x: number, z: number) => {
+      const geo = new THREE.PlaneGeometry(qSize, qSize);
+      const mat = new THREE.MeshLambertMaterial({ color, transparent: true, opacity: 0.3 });
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.rotation.x = -Math.PI / 2;
+      mesh.position.set(x, 0.005, z);
+      this.courtMesh!.add(mesh);
+      return mesh;
+    };
+    this.quadrantOverlays['rey'] = makeQuad(0xFFD700, halfSize / 2, halfSize / 2);
+    this.quadrantOverlays['rey1'] = makeQuad(0xC0C0C0, -halfSize / 2, halfSize / 2);
+    this.quadrantOverlays['rey2'] = makeQuad(0xCD7F32, -halfSize / 2, -halfSize / 2);
+    this.quadrantOverlays['mato'] = makeQuad(0xFF6B6B, halfSize / 2, -halfSize / 2);
 
     // Add position labels with emojis
     const quadrantLabels = [
@@ -312,7 +309,24 @@ export default class GameScene {
     this.ballMesh = new THREE.Mesh(ballGeometry, ballMaterial);
     this.ballMesh.castShadow = false; // No shadows
     this.ballMesh.position.set(0, 2, 0); // Start higher
-    this.scene.add(this.ballMesh);
+  this.scene.add(this.ballMesh);
+
+  // Add a soft circular shadow under the ball that scales/fades with height
+  const shadowCanvas = document.createElement('canvas');
+  shadowCanvas.width = 128; shadowCanvas.height = 128;
+  const sctx = shadowCanvas.getContext('2d')!;
+  const grad = sctx.createRadialGradient(64, 64, 10, 64, 64, 64);
+  grad.addColorStop(0, 'rgba(0,0,0,0.4)');
+  grad.addColorStop(1, 'rgba(0,0,0,0)');
+  sctx.fillStyle = grad;
+  sctx.beginPath(); sctx.arc(64, 64, 64, 0, Math.PI * 2); sctx.fill();
+  const shadowTex = new THREE.CanvasTexture(shadowCanvas);
+  const shadowMat = new THREE.MeshBasicMaterial({ map: shadowTex, transparent: true, depthWrite: false });
+  const shadowGeo = new THREE.PlaneGeometry(2, 2);
+  this.ballShadowMesh = new THREE.Mesh(shadowGeo, shadowMat);
+  this.ballShadowMesh.rotation.x = -Math.PI / 2;
+  this.ballShadowMesh.position.set(0, 0.01, 0);
+  this.scene.add(this.ballShadowMesh);
   }
 
   private createPlayerMesh(_playerId: string, nickname: string, role: string): THREE.Group {
@@ -666,6 +680,15 @@ export default class GameScene {
     // Update ball
     if (this.ballMesh) {
       this.ballMesh.position.set(state.ball.x, state.ball.y, state.ball.z);
+      if (this.ballShadowMesh) {
+        const h = Math.max(0, state.ball.y);
+        const scale = Math.max(0.8, 2.2 - h * 0.15);
+        const opacity = Math.max(0.2, 0.8 - h * 0.08);
+        this.ballShadowMesh.position.set(state.ball.x, 0.01, state.ball.z);
+        this.ballShadowMesh.scale.set(scale, scale, 1);
+        const mat = this.ballShadowMesh.material as THREE.MeshBasicMaterial;
+        mat.opacity = opacity;
+      }
     }
   }
 
@@ -691,6 +714,44 @@ export default class GameScene {
         showLeaderboard: true,
         leaderboard: message.leaderboard
       });
+    }
+
+    if (message.type === 'quadrantHighlight') {
+      const role: string = message.role;
+      const color: string = message.color; // 'blue' or 'red'
+      const mesh = this.quadrantOverlays[role];
+      if (mesh) {
+        const matAny = mesh.material as any;
+        const mat: THREE.MeshLambertMaterial | null = Array.isArray(matAny)
+          ? (matAny[0] instanceof THREE.MeshLambertMaterial ? matAny[0] : null)
+          : (matAny instanceof THREE.MeshLambertMaterial ? matAny : null);
+        if (mat) {
+          const originalColor = mat.color.getHex();
+          const targetColor = color === 'red' ? 0xFF0000 : 0x0000FF;
+          const originalOpacity = mat.opacity;
+          mat.color.setHex(targetColor);
+          mat.opacity = 0.65;
+          setTimeout(() => {
+            mat.color.setHex(originalColor);
+            mat.opacity = originalOpacity;
+          }, 600);
+        }
+      }
+    }
+
+    if (message.type === 'rolesRotated') {
+      for (const [pid, mesh] of this.playerMeshes) {
+        const baseScale = mesh.scale.x || 1;
+        let t = 0;
+        const pulse = () => {
+          t += 0.08;
+          const s = 1 + Math.sin(t * Math.PI) * 0.2;
+          mesh.scale.setScalar(s);
+          if (t < 1) requestAnimationFrame(pulse);
+          else mesh.scale.setScalar(baseScale);
+        };
+        pulse();
+      }
     }
   }
 
