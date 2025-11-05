@@ -331,6 +331,25 @@
     bottom: 10px;
     left: 10px;
     right: 10px;
+    justify-content: flex-start; /* we'll position children manually */
+  }
+  
+  /* Move joystick a little to the right and higher toward the middle on mobile */
+  .left-controls {
+    position: fixed;
+    left: 35%;
+    bottom: calc(16% - 20px);
+    transform: translate(-50%, 0);
+    z-index: 110; /* above canvas */
+  }
+
+  /* Keep action buttons docked to the right on mobile */
+  .right-controls {
+    position: fixed;
+    right: 12px;
+    bottom: 12px;
+    align-items: flex-end;
+    gap: 12px;
   }
   
   .role-display, .time-display {
@@ -352,6 +371,10 @@
   .joystick-container {
     width: 100px;
     height: 100px;
+    background: transparent;
+    border: 0;
+    padding: 0;
+    outline: none;
   }
   
   .joystick-knob {

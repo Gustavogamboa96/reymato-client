@@ -67,9 +67,13 @@ export default class GameScene {
   private lastInputSent = 0;
   private playerAnimations = new Map<string, { type: string, startTime: number }>();
   
-  // Camera control - fixed position looking into court
-  private readonly cameraDistance = 12; // Increased for larger court
-  private readonly cameraHeight = 8;    // Higher for better court view
+  // Court dimensions (used for camera placement and court creation)
+  private readonly courtSize = 16;
+  private readonly courtHalfSize = this.courtSize / 2;
+
+  // Camera control - static behind-the-court view (not following the player)
+  private readonly cameraDistance = 12; // Closer to the court
+  private readonly cameraHeight = 9;    // Slightly lower for a tighter view
   
   public onStateChange: ((state: any) => void) | null = null;
 
@@ -114,17 +118,17 @@ export default class GameScene {
     // Create ball
     this.createBall();
 
-    // Set initial camera position
-    this.camera.position.set(0, this.cameraHeight, this.cameraDistance);
+    // Set initial camera position (default behind top side looking toward center)
+    this.camera.position.set(0, this.cameraHeight, this.courtHalfSize + this.cameraDistance);
     this.camera.lookAt(0, 0, 0);
   }
 
   private createCourt() {
     this.courtMesh = new THREE.Group();
 
-    // Court dimensions - match server size
-    const courtSize = 16;
-    const halfSize = courtSize / 2;
+  // Court dimensions - match server size
+  const courtSize = this.courtSize;
+  const halfSize = this.courtHalfSize;
 
     // Ground plane
     const groundGeometry = new THREE.PlaneGeometry(courtSize, courtSize);
@@ -182,10 +186,10 @@ export default class GameScene {
       this.courtMesh!.add(mesh);
       return mesh;
     };
-    this.quadrantOverlays['rey'] = makeQuad(0xFFD700, halfSize / 2, halfSize / 2);
-    this.quadrantOverlays['rey1'] = makeQuad(0xC0C0C0, -halfSize / 2, halfSize / 2);
-    this.quadrantOverlays['rey2'] = makeQuad(0xCD7F32, -halfSize / 2, -halfSize / 2);
-    this.quadrantOverlays['mato'] = makeQuad(0xFF6B6B, halfSize / 2, -halfSize / 2);
+  this.quadrantOverlays['rey'] = makeQuad(0xFFD700, halfSize / 2, halfSize / 2);
+  this.quadrantOverlays['rey1'] = makeQuad(0xC0C0C0, -halfSize / 2, halfSize / 2);
+  this.quadrantOverlays['rey2'] = makeQuad(0xCD7F32, -halfSize / 2, -halfSize / 2);
+  this.quadrantOverlays['mato'] = makeQuad(0xFF6B6B, halfSize / 2, -halfSize / 2);
 
     // Add position labels with emojis
     const quadrantLabels = [
@@ -437,10 +441,10 @@ export default class GameScene {
       this.renderer.setSize(window.innerWidth, window.innerHeight);
     });
 
-    // Input sending interval
+    // Input sending interval - increase to 30Hz for more responsive controls
     setInterval(() => {
       this.sendInput();
-    }, 1000 / 20); // 20 times per second
+    }, 1000 / 30); // 30 times per second
   }
 
   private startRenderLoop() {
@@ -453,69 +457,40 @@ export default class GameScene {
   }
 
   private update() {
-    // Fixed camera positioning based on quadrant orientation
+    // Static camera positioning based on my role (behind side), not following player position
     const myPlayer = this.room?.state.players.get(this.myPlayerId);
-    
+
+    let desiredCameraPos: THREE.Vector3;
     if (myPlayer) {
-      // Use only ground position for camera tracking (ignore Y to prevent shake)
-      const playerGroundPos = new THREE.Vector3(myPlayer.x, 0, myPlayer.z);
-      
-      // Fixed forward direction - square arrangement, straight across
-      let forwardX = 0, forwardZ = 0;
-      
+      // Determine which side to place the camera (behind the player's side)
+      let forwardZ = 0;
       switch (myPlayer.role) {
         case 'rey':
-          // Rey (top-right) faces straight down toward Mato (bottom-right)
-          forwardX = 0; forwardZ = -1;
-          break;
         case 'rey1':
-          // Rey1 (top-left) faces straight down toward Rey2 (bottom-left)
-          forwardX = 0; forwardZ = -1;
+          forwardZ = -1; // top side faces toward -Z => camera behind at +Z
           break;
         case 'rey2':
-          // Rey2 (bottom-left) faces straight up toward Rey1 (top-left)
-          forwardX = 0; forwardZ = 1;
-          break;
         case 'mato':
-          // Mato (bottom-right) faces straight up toward Rey (top-right)
-          forwardX = 0; forwardZ = 1;
+          forwardZ = 1; // bottom side faces toward +Z => camera behind at -Z
           break;
+        default:
+          forwardZ = -1;
       }
-      
-      // Normalize forward direction
-      const forwardLength = Math.hypot(forwardX, forwardZ);
-      if (forwardLength > 0) {
-        forwardX /= forwardLength;
-        forwardZ /= forwardLength;
-      }
-      
-      // Position camera behind the player at FIXED HEIGHT (no Y following)
-      const cameraOffset = new THREE.Vector3(
-        -forwardX * this.cameraDistance,
-        this.cameraHeight, // Fixed camera height
-        -forwardZ * this.cameraDistance
+
+      const sign = -forwardZ; // behind the facing direction
+      desiredCameraPos = new THREE.Vector3(
+        0,
+        this.cameraHeight,
+        sign * (this.courtHalfSize + this.cameraDistance)
       );
-      
-      const desiredCameraPos = playerGroundPos.clone().add(cameraOffset);
-      
-      // Look at court center at ground level for stable view
-      const lookAtPos = new THREE.Vector3(0, 1, 0); // Fixed look at court center
-      
-      // Very smooth camera movement to prevent any jitter
-      this.camera.position.lerp(desiredCameraPos, 0.05); // Slower lerp for stability
-      this.camera.lookAt(lookAtPos);
-      
-      // Debug: Log player position occasionally
-      if (Math.random() < 0.01) { // Log 1% of the time to avoid spam
-        console.log(`Player ${this.myPlayerId} at position:`, myPlayer.x, myPlayer.y, myPlayer.z, 'Role:', myPlayer.role);
-      }
     } else {
-      // Default camera position if no player found
-      const defaultPos = new THREE.Vector3(0, this.cameraHeight, this.cameraDistance);
-      const defaultLookAt = new THREE.Vector3(0, 0, 0);
-      this.camera.position.lerp(defaultPos, 0.05);
-      this.camera.lookAt(defaultLookAt);
+      // Default: behind top side
+      desiredCameraPos = new THREE.Vector3(0, this.cameraHeight, this.courtHalfSize + this.cameraDistance);
     }
+
+    // Smooth settle to target (will be static unless role changes)
+    this.camera.position.lerp(desiredCameraPos, 0.1);
+    this.camera.lookAt(new THREE.Vector3(0, 1, 0));
 
     // Update player animations
     this.updatePlayerAnimations();
@@ -767,8 +742,8 @@ export default class GameScene {
   private sendInput() {
     if (!this.room) return;
 
-    const now = Date.now();
-    if (now - this.lastInputSent < 50) return; // Throttle to 20fps
+  const now = Date.now();
+  if (now - this.lastInputSent < 33) return; // Throttle to ~30fps
 
     this.room.send('input', {
       type: 'input',

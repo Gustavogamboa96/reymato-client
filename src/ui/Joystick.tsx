@@ -5,7 +5,7 @@ interface JoystickProps {
 }
 
 const Joystick = ({ onMove }: JoystickProps) => {
-  const containerRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLButtonElement>(null);
   const knobRef = useRef<HTMLDivElement>(null);
   const [isDragging, setIsDragging] = useState(false);
   const handleStart = useCallback((_clientX: number, _clientY: number) => {
@@ -37,11 +37,17 @@ const Joystick = ({ onMove }: JoystickProps) => {
     // Update knob position
     knobRef.current.style.transform = `translate(${finalX}px, ${finalY}px)`;
     
-    // Normalize values to -1 to 1
-    const normalizedX = finalX / maxRadius;
-    const normalizedY = -finalY / maxRadius; // Invert Y for game coordinates
-    
-    onMove(normalizedX, normalizedY);
+    // Normalize values to -1 to 1 with a slight non-linear boost for responsiveness
+    const nx = finalX / maxRadius;
+    const ny = -finalY / maxRadius; // Invert Y for game coordinates
+    const mag = Math.min(1, Math.hypot(nx, ny));
+    const angle = Math.atan2(ny, nx);
+    // Non-linear response: exponent < 1 boosts near-center responsiveness; slight amplification
+    const responsiveMag = Math.min(1, Math.pow(mag, 0.85) * 1.15);
+    const outX = responsiveMag * Math.cos(angle);
+    const outY = responsiveMag * Math.sin(angle);
+
+    onMove(outX, outY);
   }, [isDragging, onMove]);
 
   const handleEnd = useCallback(() => {
@@ -105,13 +111,11 @@ const Joystick = ({ onMove }: JoystickProps) => {
   }, [isDragging, handleMouseMove, handleMouseUp, handleTouchMove, handleTouchEnd]);
 
   return (
-    <div 
+    <button type="button"
       ref={containerRef}
       className="joystick-container"
       onMouseDown={handleMouseDown}
       onTouchStart={handleTouchStart}
-      role="button"
-      tabIndex={0}
       aria-label="Virtual joystick for player movement"
       style={{ 
         userSelect: 'none',
@@ -122,7 +126,7 @@ const Joystick = ({ onMove }: JoystickProps) => {
       <div className="joystick-base">
         <div ref={knobRef} className="joystick-knob" />
       </div>
-    </div>
+    </button>
   );
 };
 
