@@ -72,8 +72,9 @@ export default class GameScene {
   private readonly courtHalfSize = this.courtSize / 2;
 
   // Camera control - static behind-the-court view (not following the player)
-  private readonly cameraDistance = 12; // Closer to the court
-  private readonly cameraHeight = 9;    // Slightly lower for a tighter view
+  private readonly baseCameraDistance = 12; // Base distance used for full-court framing
+  private readonly cameraHeight = 9;        // Slightly lower for a tighter view
+  private readonly cameraFollowLerp = 0.06; // Subtle follow smoothing
   
   public onStateChange: ((state: any) => void) | null = null;
 
@@ -119,7 +120,7 @@ export default class GameScene {
     this.createBall();
 
     // Set initial camera position (default behind top side looking toward center)
-    this.camera.position.set(0, this.cameraHeight, this.courtHalfSize + this.cameraDistance);
+  this.camera.position.set(0, this.cameraHeight, this.courtHalfSize + this.baseCameraDistance);
     this.camera.lookAt(0, 0, 0);
   }
 
@@ -461,36 +462,30 @@ export default class GameScene {
     const myPlayer = this.room?.state.players.get(this.myPlayerId);
 
     let desiredCameraPos: THREE.Vector3;
-    if (myPlayer) {
-      // Determine which side to place the camera (behind the player's side)
-      let forwardZ = 0;
-      switch (myPlayer.role) {
-        case 'rey':
-        case 'rey1':
-          forwardZ = -1; // top side faces toward -Z => camera behind at +Z
-          break;
-        case 'rey2':
-        case 'mato':
-          forwardZ = 1; // bottom side faces toward +Z => camera behind at -Z
-          break;
-        default:
-          forwardZ = -1;
-      }
+    let lookTarget = new THREE.Vector3(0, 1, 0);
 
-      const sign = -forwardZ; // behind the facing direction
-      desiredCameraPos = new THREE.Vector3(
-        0,
-        this.cameraHeight,
-        sign * (this.courtHalfSize + this.cameraDistance)
-      );
+    if (myPlayer) {
+      // Slight follow: offset horizontally toward player X but keep full court in frame.
+      // Clamp horizontal shift so edges remain visible.
+      const maxHorizontalShift = 3; // limit follow amount
+      const shiftX = THREE.MathUtils.clamp(myPlayer.x * 0.4, -maxHorizontalShift, maxHorizontalShift);
+
+      // Determine which side to place the camera (behind player's half) but bias Z slightly toward player
+      const isTopSide = myPlayer.role === 'rey' || myPlayer.role === 'rey1';
+      const baseZ = (isTopSide ? (this.courtHalfSize + this.baseCameraDistance) : -(this.courtHalfSize + this.baseCameraDistance));
+      const shiftZ = THREE.MathUtils.clamp(myPlayer.z * 0.25, -2, 2); // subtle depth shift
+
+      desiredCameraPos = new THREE.Vector3(shiftX, this.cameraHeight, baseZ + shiftZ);
+
+      // Look target slightly weighted toward player horizontal position but keep center anchor
+      lookTarget = new THREE.Vector3(myPlayer.x * 0.3, 1, 0);
     } else {
-      // Default: behind top side
-      desiredCameraPos = new THREE.Vector3(0, this.cameraHeight, this.courtHalfSize + this.cameraDistance);
+      // Default static framing
+      desiredCameraPos = new THREE.Vector3(0, this.cameraHeight, this.courtHalfSize + this.baseCameraDistance);
     }
 
-    // Smooth settle to target (will be static unless role changes)
-    this.camera.position.lerp(desiredCameraPos, 0.1);
-    this.camera.lookAt(new THREE.Vector3(0, 1, 0));
+    this.camera.position.lerp(desiredCameraPos, this.cameraFollowLerp);
+    this.camera.lookAt(lookTarget);
 
     // Update player animations
     this.updatePlayerAnimations();
