@@ -72,15 +72,18 @@ function App() {
   };
 
   const transformByRole = (role: string, x: number, y: number): [number, number] => {
-    // Default: up (positive y from joystick) means -Z in world; left/right natural
-    let finalX = x;
-    let finalY = -y;
-    if (role === 'rey2' || role === 'mato') {
-      // Bottom half faces opposite: flip X and Y differently
-      finalX = -x;
-      finalY = y;
+    // Revised mapping after user feedback: joystick already inverts Y in wrapper (emitMove sends -ny).
+    // So treat incoming y as "up" positive (wrapper outputs + when user pushes up visually).
+    // Court logic: For top roles (rey, rey1) pushing up should move toward center (negative z). We map y -> -y.
+    // For bottom roles (rey2, mato) pushing up should also move toward center (positive z). We map y -> +y.
+    // X remains natural for all roles (left/right consistent).
+    if (role === 'rey' || role === 'rey1') {
+      // Top half: invert Y so up (positive) moves toward center
+      return [x, -y];
     }
-    return [finalX, finalY];
+    // Bottom half (rey2, mato): invert BOTH axes so right stays right and up moves toward center
+    // Based on in-game feedback: right was moving left and down was moving up.
+    return [-x, -y];
   };
 
   const applyMoveFromSources = () => {

@@ -53,7 +53,8 @@ const RcJoystickWrapper: React.FC<RcJoystickWrapperProps> = ({ onMove }) => {
     const nx = clampedDx / maxR;
     const ny = clampedDy / maxR;
     const m = Math.hypot(nx, ny);
-    emitMove(m < 0.05 ? 0 : nx, m < 0.05 ? 0 : -ny);
+  // Provide raw direction (up = positive y) to App; remove internal inversion.
+  emitMove(m < 0.05 ? 0 : nx, m < 0.05 ? 0 : ny);
   }, []);
 
   const handlePointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
@@ -68,7 +69,7 @@ const RcJoystickWrapper: React.FC<RcJoystickWrapperProps> = ({ onMove }) => {
     const nx = clampedDx / maxR;
     const ny = clampedDy / maxR;
     const m = Math.hypot(nx, ny);
-    emitMove(m < 0.05 ? 0 : nx, m < 0.05 ? 0 : -ny);
+  emitMove(m < 0.05 ? 0 : nx, m < 0.05 ? 0 : ny);
   }, []);
 
   const handlePointerUp = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
