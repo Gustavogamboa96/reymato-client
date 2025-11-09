@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import GameScene from './GameScene.ts';
-import Joystick from './ui/Joystick.tsx';
+import RcJoystickWrapper from './ui/RcJoystickWrapper.tsx';
 import './App.css';
 
 interface GameState {
@@ -38,6 +38,11 @@ function App() {
     action: null as 'kick' | 'head' | 'serve' | null
   });
 
+  // Track separate sources to resolve precedence (joystick wins while active)
+  const joystickVecRef = useRef<[number, number]>([0, 0]);
+  const keyboardVecRef = useRef<[number, number]>([0, 0]);
+  const lastSourceRef = useRef<'joystick' | 'keyboard' | null>(null);
+
   useEffect(() => {
     if (canvasRef.current && !gameSceneRef.current) {
       gameSceneRef.current = new GameScene(canvasRef.current);
@@ -66,22 +71,42 @@ function App() {
     }
   };
 
+  const transformByRole = (role: string, x: number, y: number): [number, number] => {
+    // Default: up (positive y from joystick) means -Z in world; left/right natural
+    let finalX = x;
+    let finalY = -y;
+    if (role === 'rey2' || role === 'mato') {
+      // Bottom half faces opposite: flip X and Y differently
+      finalX = -x;
+      finalY = y;
+    }
+    return [finalX, finalY];
+  };
+
+  const applyMoveFromSources = () => {
+    const j = joystickVecRef.current;
+    const k = keyboardVecRef.current;
+    const jMag = Math.hypot(j[0], j[1]);
+    const kMag = Math.hypot(k[0], k[1]);
+
+    // Decide precedence: if joystick active (>0.05), prefer it; else keyboard
+    if (jMag > 0.05) {
+      const [fx, fy] = transformByRole(gameState.currentRole, j[0], j[1]);
+      setInput(prev => ({ ...prev, move: [fx, fy] }));
+      lastSourceRef.current = 'joystick';
+    } else if (kMag > 0.05) {
+      const [fx, fy] = transformByRole(gameState.currentRole, k[0], k[1]);
+      setInput(prev => ({ ...prev, move: [fx, fy] }));
+      lastSourceRef.current = 'keyboard';
+    } else {
+      setInput(prev => ({ ...prev, move: [0, 0] }));
+      lastSourceRef.current = null;
+    }
+  };
+
   const handleJoystickMove = (x: number, y: number) => {
-    // Apply role-based joystick orientation based on court position
-    let finalX = x;  // Default X direction
-    let finalY = -y; // Default: up moves away from camera (for Rey, Rey1)
-    
-    // Players on the bottom half of court (negative Z) need Y flipped
-    if (gameState.currentRole === 'rey2' || gameState.currentRole === 'mato') {
-      finalY = y; // For Rey2 and Mato: up moves toward camera (toward their back line)
-    }
-    
-    // Players facing opposite directions need X flipped
-    if (gameState.currentRole === 'rey2' || gameState.currentRole === 'mato') {
-      finalX = -x; // For Rey2 and Mato: left/right are flipped
-    }
-    
-    setInput(prev => ({ ...prev, move: [finalX, finalY] }));
+    joystickVecRef.current = [x, y];
+    applyMoveFromSources();
   };
 
   const handleJump = () => {
@@ -111,6 +136,58 @@ function App() {
       setInput(prev => ({ ...prev, action: null }));
     }, 100);
   };
+
+  // Keyboard: WASD and Arrow keys
+  useEffect(() => {
+    if (gameState.showNicknameInput) {
+      // Don't bind gameplay keys while entering nickname
+      return;
+    }
+    const down = new Set<string>();
+    const handlerDown = (e: KeyboardEvent) => {
+      const key = e.key.toLowerCase();
+      if ([ 'w','a','s','d','arrowup','arrowleft','arrowdown','arrowright' ].includes(key)) {
+        down.add(key);
+        e.preventDefault();
+        const x = (down.has('a') || down.has('arrowleft') ? -1 : 0) + (down.has('d') || down.has('arrowright') ? 1 : 0);
+        const y = (down.has('w') || down.has('arrowup') ? 1 : 0) + (down.has('s') || down.has('arrowdown') ? -1 : 0);
+        let nx = x; let ny = y;
+        const mag = Math.hypot(nx, ny);
+        if (mag > 0) { nx /= mag; ny /= mag; }
+        keyboardVecRef.current = [nx, ny];
+        // Only override joystick if joystick is idle
+        if (lastSourceRef.current !== 'joystick') {
+          applyMoveFromSources();
+        }
+      }
+      // Space for jump
+      if (e.code === 'Space') {
+        handleJump();
+      }
+    };
+    const handlerUp = (e: KeyboardEvent) => {
+      const key = e.key.toLowerCase();
+      if ([ 'w','a','s','d','arrowup','arrowleft','arrowdown','arrowright' ].includes(key)) {
+        down.delete(key);
+        const x = (down.has('a') || down.has('arrowleft') ? -1 : 0) + (down.has('d') || down.has('arrowright') ? 1 : 0);
+        const y = (down.has('w') || down.has('arrowup') ? 1 : 0) + (down.has('s') || down.has('arrowdown') ? -1 : 0);
+        let nx = x; let ny = y;
+        const mag = Math.hypot(nx, ny);
+        if (mag > 0) { nx /= mag; ny /= mag; } else { nx = 0; ny = 0; }
+        keyboardVecRef.current = [nx, ny];
+        if (lastSourceRef.current !== 'joystick') {
+          applyMoveFromSources();
+        }
+      }
+    };
+    globalThis.addEventListener('keydown', handlerDown as any, { passive: false } as any);
+    globalThis.addEventListener('keyup', handlerUp as any, { passive: false } as any);
+    return () => {
+      globalThis.removeEventListener('keydown', handlerDown as any);
+      globalThis.removeEventListener('keyup', handlerUp as any);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gameState.currentRole, gameState.showNicknameInput]);
 
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -189,7 +266,7 @@ function App() {
           {/* Mobile Controls */}
           <div className="controls">
             <div className="left-controls">
-              <Joystick onMove={handleJoystickMove} />
+              <RcJoystickWrapper onMove={handleJoystickMove} />
             </div>
             
             <div className="right-controls">

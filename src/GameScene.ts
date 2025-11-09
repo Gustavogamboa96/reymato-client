@@ -5,6 +5,8 @@ interface PlayerState {
   id: string;
   nickname: string;
   role: string;
+  // persistent player color provided by server (e.g. "#RRGGBB" or "hsl(h,s%,l%)")
+  color: string;
   x: number;
   y: number;
   z: number;
@@ -203,8 +205,9 @@ export default class GameScene {
     for (const label of quadrantLabels) {
       const canvas = document.createElement('canvas');
       const context = canvas.getContext('2d')!;
-      canvas.width = 256;
-      canvas.height = 128;
+      // Larger canvas for better readability
+      canvas.width = 512;
+      canvas.height = 256;
       
       // Clear canvas
       context.fillStyle = 'rgba(0, 0, 0, 0.7)';
@@ -212,9 +215,14 @@ export default class GameScene {
       
       // Draw text
       context.fillStyle = label.color;
-      context.font = 'bold 32px Arial';
+      context.font = 'bold 96px Arial';
       context.textAlign = 'center';
-      context.fillText(label.text, canvas.width / 2, canvas.height / 2 + 10);
+      context.textBaseline = 'middle';
+      // Add subtle stroke for contrast
+      context.lineWidth = 6;
+      context.strokeStyle = 'rgba(0,0,0,0.8)';
+      context.strokeText(label.text, canvas.width / 2, canvas.height / 2);
+      context.fillText(label.text, canvas.width / 2, canvas.height / 2);
       
       const texture = new THREE.CanvasTexture(canvas);
       const material = new THREE.MeshBasicMaterial({ 
@@ -223,7 +231,8 @@ export default class GameScene {
         alphaTest: 0.1
       });
       
-      const geometry = new THREE.PlaneGeometry(2, 1);
+      // Bigger plane to match larger label
+      const geometry = new THREE.PlaneGeometry(3.6, 1.8);
       const textMesh = new THREE.Mesh(geometry, material);
       textMesh.rotation.x = -Math.PI / 2;
       textMesh.position.set(label.pos[0], label.pos[1], label.pos[2]);
@@ -233,9 +242,57 @@ export default class GameScene {
     this.scene.add(this.courtMesh);
   }
 
-  private createAmongUsCharacter(role: string): THREE.Group {
+  private parseColorToHex(color: string): number {
+    // Accepts "#rrggbb" or "hsl(h,s%,l%)"; returns hex number
+    if (!color) return 0x808080;
+    const c = color.trim();
+    if (c.startsWith('#')) {
+      const hex = c.slice(1);
+      const n = parseInt(hex, 16);
+      if (!Number.isNaN(n)) return n;
+    }
+    if (c.startsWith('hsl')) {
+      const m = c.match(/hsl\(\s*([\d.]+)\s*,\s*([\d.]+)%\s*,\s*([\d.]+)%\s*\)/i);
+      if (m) {
+        const h = (parseFloat(m[1]) % 360) / 360;
+        const s = Math.max(0, Math.min(1, parseFloat(m[2]) / 100));
+        const l = Math.max(0, Math.min(1, parseFloat(m[3]) / 100));
+        // hsl to rgb
+        const hue2rgb = (p: number, q: number, t: number) => {
+          if (t < 0) t += 1;
+          if (t > 1) t -= 1;
+          if (t < 1 / 6) return p + (q - p) * 6 * t;
+          if (t < 1 / 2) return q;
+          if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+          return p;
+        };
+        const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+        const p = 2 * l - q;
+        const r = Math.round(hue2rgb(p, q, h + 1 / 3) * 255);
+        const g = Math.round(hue2rgb(p, q, h) * 255);
+        const b = Math.round(hue2rgb(p, q, h - 1 / 3) * 255);
+        return (r << 16) | (g << 8) | b;
+      }
+    }
+    // Fallback on named color via canvas
+    const tmp = document.createElement('canvas');
+    const ctx = tmp.getContext('2d');
+    if (ctx) {
+      ctx.fillStyle = '#000000';
+      ctx.fillStyle = c;
+      const computed = ctx.fillStyle as string;
+      if (computed.startsWith('#')) {
+        const n = parseInt(computed.slice(1), 16);
+        if (!Number.isNaN(n)) return n;
+      }
+    }
+    return 0x808080;
+  }
+
+  private createAmongUsCharacter(baseColorHex: number): THREE.Group {
     const character = new THREE.Group();
-    const roleColor = this.getRoleColor(role);
+    character.name = 'character';
+    const roleColor = baseColorHex;
     
     // Main body (pill-shaped - cylinder with rounded ends)
     const bodyGeometry = new THREE.CapsuleGeometry(0.6, 1.2, 4, 8);
@@ -243,6 +300,7 @@ export default class GameScene {
     const body = new THREE.Mesh(bodyGeometry, bodyMaterial);
     body.position.y = 0.8;
     body.castShadow = true;
+    body.name = 'body';
     character.add(body);
     
     // Visor (glass window) - dark blue/black ellipse
@@ -265,6 +323,7 @@ export default class GameScene {
     const backpack = new THREE.Mesh(backpackGeometry, backpackMaterial);
     backpack.position.set(-0.45, 0.8, 0);
     backpack.castShadow = true;
+    backpack.name = 'backpack';
     character.add(backpack);
     
     // Legs (short stubs)
@@ -309,19 +368,24 @@ export default class GameScene {
     const ballMaterial = new THREE.MeshLambertMaterial({ 
       color: 0xFFFFFF,
       transparent: true,
-      opacity: 0.95
+      opacity: 0.98
     });
     this.ballMesh = new THREE.Mesh(ballGeometry, ballMaterial);
     this.ballMesh.castShadow = false; // No shadows
     this.ballMesh.position.set(0, 2, 0); // Start higher
-  this.scene.add(this.ballMesh);
+    // Apply a "Jabulani"-style painted texture
+  const teamgeistTex = this.generateTeamgeistTexture(1024);
+  (this.ballMesh.material as THREE.MeshLambertMaterial).map = teamgeistTex;
+    (this.ballMesh.material as THREE.MeshLambertMaterial).needsUpdate = true;
+    this.scene.add(this.ballMesh);
 
   // Add a soft circular shadow under the ball that scales/fades with height
   const shadowCanvas = document.createElement('canvas');
   shadowCanvas.width = 128; shadowCanvas.height = 128;
   const sctx = shadowCanvas.getContext('2d')!;
   const grad = sctx.createRadialGradient(64, 64, 10, 64, 64, 64);
-  grad.addColorStop(0, 'rgba(0,0,0,0.4)');
+  // Slightly more solid center for the shadow
+  grad.addColorStop(0, 'rgba(0,0,0,0.55)');
   grad.addColorStop(1, 'rgba(0,0,0,0)');
   sctx.fillStyle = grad;
   sctx.beginPath(); sctx.arc(64, 64, 64, 0, Math.PI * 2); sctx.fill();
@@ -334,54 +398,105 @@ export default class GameScene {
   this.scene.add(this.ballShadowMesh);
   }
 
-  private createPlayerMesh(_playerId: string, nickname: string, role: string): THREE.Group {
+  private buildPlayerLabelTexture(role: string, nickname: string): THREE.CanvasTexture {
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d')!;
+    // Larger canvas for high DPI, we'll center a smaller translucent background
+    canvas.width = 640;
+    canvas.height = 220;
+
+    // Prepare fonts
+    const emojiFont = '56px Arial';
+    const nameFont = 'bold 72px Arial';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+
+    // Icons inline with nickname
+    const roleEmojis: Record<string, string> = {
+      rey: '👑',
+      rey1: '🥈',
+      rey2: '🥉',
+      mato: '💩',
+    };
+    const icons: string[] = [];
+    if (role === 'rey') {
+      icons.push('👑');
+    } else {
+      icons.push(roleEmojis[role] || '🔵');
+    }
+
+    // Measure widths
+    ctx.font = emojiFont;
+    const gap = 20;
+    let totalWidth = 0;
+    for (const ic of icons) totalWidth += ctx.measureText(ic).width + gap;
+    ctx.font = nameFont;
+    totalWidth += ctx.measureText(nickname).width;
+
+    // Background box (smaller and translucent)
+    const paddingX = 28;
+    const paddingY = 18;
+    const boxW = Math.min(canvas.width - 40, totalWidth + paddingX * 2);
+    const boxH = 96 + paddingY * 2; // height based on name font
+    const boxX = (canvas.width - boxW) / 2;
+    const boxY = (canvas.height - boxH) / 2;
+
+    // Draw translucent rounded rectangle
+    const radius = 18;
+    ctx.fillStyle = 'rgba(0,0,0,0.45)';
+    ctx.beginPath();
+    ctx.moveTo(boxX + radius, boxY);
+    ctx.lineTo(boxX + boxW - radius, boxY);
+    ctx.quadraticCurveTo(boxX + boxW, boxY, boxX + boxW, boxY + radius);
+    ctx.lineTo(boxX + boxW, boxY + boxH - radius);
+    ctx.quadraticCurveTo(boxX + boxW, boxY + boxH, boxX + boxW - radius, boxY + boxH);
+    ctx.lineTo(boxX + radius, boxY + boxH);
+    ctx.quadraticCurveTo(boxX, boxY + boxH, boxX, boxY + boxH - radius);
+    ctx.lineTo(boxX, boxY + radius);
+    ctx.quadraticCurveTo(boxX, boxY, boxX + radius, boxY);
+    ctx.closePath();
+    ctx.fill();
+
+    // Draw inline content centered
+    let cursorX = (canvas.width - totalWidth) / 2;
+    const midY = canvas.height / 2;
+
+    // Icons
+    ctx.font = emojiFont;
+    for (const ic of icons) {
+      ctx.fillStyle = '#FFFFFF';
+      ctx.fillText(ic, cursorX, midY);
+      cursorX += ctx.measureText(ic).width + gap;
+    }
+
+    // Nickname with stroke for contrast
+    ctx.font = nameFont;
+    ctx.lineWidth = 8;
+    ctx.strokeStyle = 'rgba(0,0,0,0.85)';
+    ctx.strokeText(nickname, cursorX, midY);
+    ctx.fillStyle = '#FFFFFF';
+    ctx.fillText(nickname, cursorX, midY);
+
+    return new THREE.CanvasTexture(canvas);
+  }
+
+
+  private createPlayerMesh(_playerId: string, nickname: string, role: string, colorStr: string): THREE.Group {
     const playerGroup = new THREE.Group();
+    playerGroup.userData.role = role;
 
     // Create custom Among Us-style character
-    const amongUsCharacter = this.createAmongUsCharacter(role);
+    const baseHex = this.parseColorToHex(colorStr);
+    const amongUsCharacter = this.createAmongUsCharacter(baseHex);
     playerGroup.add(amongUsCharacter);
 
     // Name label with role emoji
-    const canvas = document.createElement('canvas');
-    const context = canvas.getContext('2d')!;
-    canvas.width = 256;
-    canvas.height = 80;
-    
-    // Background
-    context.fillStyle = 'rgba(0, 0, 0, 0.8)';
-    context.fillRect(0, 0, canvas.width, canvas.height);
-    
-    // Role emoji and name
-    const roleEmojis = {
-      'rey': '👑',
-      'rey1': '🥈',
-      'rey2': '🥉',
-      'mato': '💩'
-    };
-    
-    const emoji = roleEmojis[role as keyof typeof roleEmojis] || '🔵';
-    const roleColor = this.getRoleColor(role);
-    
-    // Draw emoji
-    context.font = '20px Arial';
-    context.textAlign = 'center';
-    context.fillText(emoji, canvas.width / 2, 25);
-    
-    // Draw role name
-    context.fillStyle = `#${roleColor.toString(16).padStart(6, '0')}`;
-    context.font = 'bold 16px Arial';
-    context.fillText(role.toUpperCase(), canvas.width / 2, 45);
-    
-    // Draw nickname
-    context.fillStyle = '#FFFFFF';
-    context.font = '14px Arial';
-    context.fillText(nickname, canvas.width / 2, 65);
-
-    const labelTexture = new THREE.CanvasTexture(canvas);
+    const labelTexture = this.buildPlayerLabelTexture(role, nickname);
     const labelMaterial = new THREE.SpriteMaterial({ map: labelTexture });
     const labelSprite = new THREE.Sprite(labelMaterial);
-    labelSprite.position.y = 3;
-    labelSprite.scale.set(2, 0.5, 1);
+  labelSprite.position.y = 3.2;
+    // Slightly smaller black box, still readable
+    labelSprite.scale.set(3.8, 1.1, 1);
     playerGroup.add(labelSprite);
 
     return playerGroup;
@@ -563,7 +678,7 @@ export default class GameScene {
       if (!this.playerMeshes.has(playerId)) {
         // Create new player mesh
         console.log('🆕 Creating new player mesh for:', playerId, player.nickname, player.role);
-        const playerMesh = this.createPlayerMesh(playerId, player.nickname, player.role);
+        const playerMesh = this.createPlayerMesh(playerId, player.nickname, player.role, player.color || '#808080');
         this.playerMeshes.set(playerId, playerMesh);
         this.scene.add(playerMesh);
         
@@ -574,6 +689,8 @@ export default class GameScene {
       }
 
       const playerMesh = this.playerMeshes.get(playerId)!;
+      const previousRole: string | undefined = playerMesh.userData.role;
+      const playerColorHex = this.parseColorToHex(player.color || '#808080');
       
       // Direct position update (no lerping to avoid trails)
       const targetPos = new THREE.Vector3(player.x, player.y, player.z);
@@ -581,44 +698,45 @@ export default class GameScene {
       
       playerMesh.rotation.y = player.rotY;
 
-      // Update role color and check for role changes
-      const newColor = this.getRoleColor(player.role);
-      let hasColorChanged = false;
-      
-      // Update color for Among Us character (skip visor which should stay dark)
-      playerMesh.traverse((child) => {
-        if (child instanceof THREE.Mesh && child.material && child.material instanceof THREE.MeshLambertMaterial) {
-          // Skip the visor (dark colored part)
-          if (child.material.color.getHex() === 0x1a1a2e) return;
-          
-          const currentColor = child.material.color.getHex();
-          if (currentColor !== newColor && currentColor !== 0x1a1a2e) {
-            // Update main body and leg colors, keep backpack darker
-            if (child.material.color.r > 0.5) { // Main body parts
-              hasColorChanged = true;
-              child.material.color.setHex(newColor);
-            } else { // Backpack (darker version)
-              hasColorChanged = true;
-              child.material.color.setHex(new THREE.Color(newColor).multiplyScalar(0.8).getHex());
-            }
-          }
+      // Ensure body color reflects persistent player color (independent of role)
+      const body = playerMesh.getObjectByName('body') as THREE.Mesh | null;
+      if (body && body.material instanceof THREE.MeshLambertMaterial) {
+        body.material.color.setHex(playerColorHex);
+      }
+      const backpack = playerMesh.getObjectByName('backpack') as THREE.Mesh | null;
+      if (backpack && backpack.material instanceof THREE.MeshLambertMaterial) {
+        backpack.material.color.setHex(new THREE.Color(playerColorHex).multiplyScalar(0.8).getHex());
+      }
+      const leftLeg = playerMesh.getObjectByName('leftLeg') as THREE.Mesh | null;
+      const rightLeg = playerMesh.getObjectByName('rightLeg') as THREE.Mesh | null;
+      const leftFoot = playerMesh.getObjectByName('leftFoot') as THREE.Mesh | null;
+      const rightFoot = playerMesh.getObjectByName('rightFoot') as THREE.Mesh | null;
+      for (const part of [leftLeg, rightLeg, leftFoot, rightFoot]) {
+        if (part && part.material instanceof THREE.MeshLambertMaterial) {
+          part.material.color.setHex(playerColorHex);
         }
-      });
-      
-      if (hasColorChanged) {
-        // Role changed! Add visual effect
-        const glowGeometry = new THREE.SphereGeometry(1, 16, 16); // Slightly bigger glow
-        const glowMaterial = new THREE.MeshBasicMaterial({ 
-          color: newColor, 
-          transparent: true, 
-          opacity: 0.5 
-        });
+      }
+
+      // Role change handling: update label and crown + pulse effect
+      if (previousRole !== player.role) {
+        playerMesh.userData.role = player.role;
+        // Update label texture
+        const labelSprite = playerMesh.children.find(c => c instanceof THREE.Sprite) as THREE.Sprite | undefined;
+        if (labelSprite && labelSprite.material instanceof THREE.SpriteMaterial) {
+          const newTex = this.buildPlayerLabelTexture(player.role, player.nickname);
+          if (labelSprite.material.map) labelSprite.material.map.dispose();
+          labelSprite.material.map = newTex;
+          labelSprite.material.needsUpdate = true;
+        }
+
+        // Visual pulse (use role color highlight)
+        const roleHex = this.getRoleColor(player.role);
+        const glowGeometry = new THREE.SphereGeometry(1, 16, 16);
+        const glowMaterial = new THREE.MeshBasicMaterial({ color: roleHex, transparent: true, opacity: 0.5 });
         const glowMesh = new THREE.Mesh(glowGeometry, glowMaterial);
         glowMesh.position.copy(playerMesh.position);
         glowMesh.position.y += 1;
         this.scene.add(glowMesh);
-        
-        // Animate glow effect
         let glowOpacity = 0.8;
         let glowScale = 0.5;
         const glowAnimation = () => {
@@ -626,10 +744,8 @@ export default class GameScene {
           glowScale += 0.02;
           glowMaterial.opacity = glowOpacity;
           glowMesh.scale.setScalar(glowScale);
-          
-          if (glowOpacity > 0) {
-            requestAnimationFrame(glowAnimation);
-          } else {
+          if (glowOpacity > 0) requestAnimationFrame(glowAnimation);
+          else {
             this.scene.remove(glowMesh);
             glowGeometry.dispose();
             glowMaterial.dispose();
@@ -660,6 +776,92 @@ export default class GameScene {
         mat.opacity = opacity;
       }
     }
+  }
+
+  private generateTeamgeistTexture(size = 1024): THREE.CanvasTexture {
+    const canvas = document.createElement('canvas');
+    canvas.width = size; canvas.height = size;
+    const ctx = canvas.getContext('2d')!;
+
+    // Base slightly off-white for authenticity
+    const baseGradient = ctx.createLinearGradient(0, 0, size, size);
+    baseGradient.addColorStop(0, '#ffffff');
+    baseGradient.addColorStop(1, '#f7f7f7');
+    ctx.fillStyle = baseGradient;
+    ctx.fillRect(0, 0, size, size);
+
+    // Teamgeist panel style: large sweeping curved black lines + gold accent curves
+    const w = size; const h = size;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+
+    const strokeBlack = (cb: () => void, width: number) => {
+      ctx.strokeStyle = '#000000';
+      ctx.lineWidth = width;
+      ctx.beginPath();
+      cb();
+      ctx.stroke();
+    };
+    const strokeGold = (cb: () => void, width: number) => {
+      ctx.strokeStyle = '#c9a23b'; // muted gold
+      ctx.lineWidth = width;
+      ctx.beginPath();
+      cb();
+      ctx.stroke();
+    };
+
+    // Helper for big bezier swoosh
+    const swoosh = (p: [number, number], c1: [number, number], c2: [number, number], e: [number, number], width: number, gold?: boolean) => {
+      const fn = () => {
+        ctx.moveTo(p[0], p[1]);
+        ctx.bezierCurveTo(c1[0], c1[1], c2[0], c2[1], e[0], e[1]);
+      };
+      if (gold) strokeGold(fn, width); else strokeBlack(fn, width);
+    };
+
+    // Panel curve definitions to reduce duplication & satisfy lint (avoid trailing zeros like 0.30)
+    interface CurveSpec { p:[number,number]; c1:[number,number]; c2:[number,number]; e:[number,number]; w:number; gold?:boolean; }
+    const blackCurves: CurveSpec[] = [
+      { p:[w*0.05,h*0.25], c1:[w*0.25,h*0.05], c2:[w*0.55,h*0.45], e:[w*0.95,h*0.2], w:w*0.035 },
+      { p:[w*0.1,h*0.7], c1:[w*0.35,h*0.95], c2:[w*0.6,h*0.55], e:[w*0.95,h*0.8], w:w*0.035 },
+      { p:[w*0.05,h*0.45], c1:[w*0.3,h*0.3], c2:[w*0.55,h*0.75], e:[w*0.9,h*0.55], w:w*0.03 },
+      { p:[w*0.15,h*0.05], c1:[w*0.4,h*0.25], c2:[w*0.6,h*0.1], e:[w*0.85,h*0.05], w:w*0.022 },
+      { p:[w*0.2,h*0.95], c1:[w*0.45,h*0.75], c2:[w*0.55,h*0.9], e:[w*0.8,h*0.95], w:w*0.022 },
+    ];
+    const goldCurves: CurveSpec[] = [
+      { p:[w*0.07,h*0.28], c1:[w*0.26,h*0.09], c2:[w*0.53,h*0.47], e:[w*0.92,h*0.23], w:w*0.015, gold:true },
+      { p:[w*0.12,h*0.73], c1:[w*0.37,h*0.93], c2:[w*0.63,h*0.57], e:[w*0.92,h*0.78], w:w*0.015, gold:true },
+      { p:[w*0.07,h*0.48], c1:[w*0.31,h*0.33], c2:[w*0.56,h*0.74], e:[w*0.88,h*0.57], w:w*0.012, gold:true },
+    ];
+    for (const c of blackCurves) {
+      swoosh(c.p, c.c1, c.c2, c.e, c.w, false);
+    }
+    for (const c of goldCurves) {
+      swoosh(c.p, c.c1, c.c2, c.e, c.w, true);
+    }
+
+    // Center subtle radial shadow for depth
+    const radial = ctx.createRadialGradient(w/2,h/2, w*0.05, w/2,h/2, w*0.5);
+    radial.addColorStop(0,'rgba(0,0,0,0)');
+    radial.addColorStop(1,'rgba(0,0,0,0.05)');
+    ctx.fillStyle = radial;
+    ctx.fillRect(0,0,w,h);
+
+    // Very light micro-texture (distant speckles)
+    ctx.globalAlpha = 0.07;
+    ctx.fillStyle = '#bdbdbd';
+    for (let i=0;i<1500;i++) {
+      const x = Math.random()*w;
+      const y = Math.random()*h;
+      ctx.fillRect(x, y, 1.1, 1.1);
+    }
+    ctx.globalAlpha = 1;
+
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+    tex.repeat.set(1, 1);
+    tex.anisotropy = 4;
+    return tex;
   }
 
   private updateUI(state: GameStateSchema) {
