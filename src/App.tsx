@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import GameScene from './GameScene.ts';
 import RcJoystickWrapper from './ui/RcJoystickWrapper.tsx';
 import './App.css';
@@ -42,6 +42,12 @@ function App() {
   const joystickVecRef = useRef<[number, number]>([0, 0]);
   const keyboardVecRef = useRef<[number, number]>([0, 0]);
   const lastSourceRef = useRef<'joystick' | 'keyboard' | null>(null);
+  const currentRoleRef = useRef<string>('queue');
+
+  // Keep currentRoleRef in sync with gameState.currentRole
+  useEffect(() => {
+    currentRoleRef.current = gameState.currentRole;
+  }, [gameState.currentRole]);
 
   useEffect(() => {
     if (canvasRef.current && !gameSceneRef.current) {
@@ -72,21 +78,22 @@ function App() {
   };
 
   const transformByRole = (role: string, x: number, y: number): [number, number] => {
-    // Revised mapping after user feedback: joystick already inverts Y in wrapper (emitMove sends -ny).
-    // So treat incoming y as "up" positive (wrapper outputs + when user pushes up visually).
-    // Court logic: For top roles (rey, rey1) pushing up should move toward center (negative z). We map y -> -y.
-    // For bottom roles (rey2, mato) pushing up should also move toward center (positive z). We map y -> +y.
-    // X remains natural for all roles (left/right consistent).
+    console.log('TRANSFORM INPUT:', { role, x, y });
+    // Rey and Rey1 work correctly with [x, -y]
     if (role === 'rey' || role === 'rey1') {
-      // Top half: invert Y so up (positive) moves toward center
-      return [x, -y];
+      const result: [number, number] = [x, -y];
+      console.log('TRANSFORM OUTPUT (rey/rey1):', result);
+      return result;
     }
-    // Bottom half (rey2, mato): invert BOTH axes so right stays right and up moves toward center
-    // Based on in-game feedback: right was moving left and down was moving up.
-    return [-x, -y];
-  };
-
-  const applyMoveFromSources = () => {
+    // Rey2 and Mato face opposite direction, need both axes inverted
+    if (role === 'rey2' || role === 'mato') {
+      const result: [number, number] = [-x, y];
+      console.log('TRANSFORM OUTPUT (rey2/mato):', result);
+      return result;
+    }
+    // Default
+    return [x, -y];
+  };  const applyMoveFromSources = () => {
     const j = joystickVecRef.current;
     const k = keyboardVecRef.current;
     const jMag = Math.hypot(j[0], j[1]);
@@ -94,11 +101,11 @@ function App() {
 
     // Decide precedence: if joystick active (>0.05), prefer it; else keyboard
     if (jMag > 0.05) {
-      const [fx, fy] = transformByRole(gameState.currentRole, j[0], j[1]);
+      const [fx, fy] = transformByRole(currentRoleRef.current, j[0], j[1]);
       setInput(prev => ({ ...prev, move: [fx, fy] }));
       lastSourceRef.current = 'joystick';
     } else if (kMag > 0.05) {
-      const [fx, fy] = transformByRole(gameState.currentRole, k[0], k[1]);
+      const [fx, fy] = transformByRole(currentRoleRef.current, k[0], k[1]);
       setInput(prev => ({ ...prev, move: [fx, fy] }));
       lastSourceRef.current = 'keyboard';
     } else {
@@ -108,6 +115,7 @@ function App() {
   };
 
   const handleJoystickMove = (x: number, y: number) => {
+    console.log('JOYSTICK RAW:', { x, y, role: currentRoleRef.current });
     joystickVecRef.current = [x, y];
     applyMoveFromSources();
   };
@@ -133,12 +141,7 @@ function App() {
     }, 100);
   };
 
-  const handleServe = () => {
-    setInput(prev => ({ ...prev, action: 'serve' }));
-    setTimeout(() => {
-      setInput(prev => ({ ...prev, action: null }));
-    }, 100);
-  };
+  // Serve removed: ball auto-spawns from Rey quadrant with momentum
 
   // Keyboard: WASD and Arrow keys
   useEffect(() => {
@@ -253,13 +256,7 @@ function App() {
               </div>
             )}
 
-            {gameState.waitingForServe && (
-              <div className="serve-indicator">
-                {gameState.currentServer === gameState.currentRole 
-                  ? "🎾 Your serve! Tap SERVE button" 
-                  : `⏳ Waiting for ${gameState.currentServer.toUpperCase()} to serve`}
-              </div>
-            )}
+            {/* Serve indicator removed; serves are now automatic */}
 
             <div className="connection-status">
               {gameState.connected ? '🟢 Connected' : '🔴 Disconnected'}
@@ -277,12 +274,7 @@ function App() {
                 JUMP
               </button>
               
-              {/* Show serve button only when it's this player's turn to serve */}
-              {gameState.waitingForServe && gameState.currentServer === gameState.currentRole && (
-                <button className="action-button serve-button" onMouseDown={handleServe} onTouchStart={handleServe}>
-                  SERVE
-                </button>
-              )}
+              {/* Serve button removed */}
               
               <div className="action-row">
                 <button className="action-button kick-button" onMouseDown={handleKick} onTouchStart={handleKick}>

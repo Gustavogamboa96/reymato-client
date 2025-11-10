@@ -31,7 +31,9 @@ const RcJoystickWrapper: React.FC<RcJoystickWrapperProps> = ({ onMove }) => {
     }
     if (Math.abs(outX - lastOutRef.current.x) > 0.01 || Math.abs(outY - lastOutRef.current.y) > 0.01) {
       lastOutRef.current = { x: outX, y: outY };
-      onMove(outX, outY);
+      // Match keyboard behavior: up = positive Y, down = negative Y
+      // Joystick naturally gives up = negative Y, so we need to invert Y
+      onMove(outX, -outY);
     }
   };
 
@@ -53,7 +55,7 @@ const RcJoystickWrapper: React.FC<RcJoystickWrapperProps> = ({ onMove }) => {
     const nx = clampedDx / maxR;
     const ny = clampedDy / maxR;
     const m = Math.hypot(nx, ny);
-  // Provide raw direction (up = positive y) to App; remove internal inversion.
+  // Emit raw joystick values (up = negative Y, down = positive Y)
   emitMove(m < 0.05 ? 0 : nx, m < 0.05 ? 0 : ny);
   }, []);
 
